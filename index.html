@@ -16,17 +16,16 @@
   <button onclick="stop()">⏹ Dừng</button>
 
   <script>
-    async function loadStory() {
-      alert("oki1");
-      const link = document.getElementById('storyLink').value;
-      const api = "https://truyen-reader.testnetboom07.workers.dev/?url=" + encodeURIComponent(link);
+    async function loadStory(url) {
+      const api = "https://truyen-reader.testnetboom07.workers.dev/?url=" + encodeURIComponent(url);
       alert(api);
       try {
         const res = await fetch(api);
+        if (!res.ok) throw new Error("Server trả lỗi " + res.status);
         const data = await res.json();
-        document.getElementById('storyText').value = data.text;
-      } catch (err) {
-        alert("Không tải được: " + err);
+        document.getElementById("output").innerText = data.text;
+      } catch (e) {
+        alert("Không tải được: " + e.message);
       }
     }
 
