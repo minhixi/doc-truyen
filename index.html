@@ -70,7 +70,9 @@
       try {
         const api = WORKER_BASE + encodeURIComponent(url);
         alert(api);
-        const res = await fetch(api);
+        const res = await fetch(api, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+        });
         alert(res);
         if (!res.ok) throw new Error("Server trả lỗi " + res.status);
         const data = await res.json();
