@@ -10,13 +10,14 @@
     textarea{ width:100%; height:260px; margin-top:12px; padding:10px; box-sizing:border-box; }
     .controls{ margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .status{ margin-top:8px; color:#333; font-size:14px; }
+    label{ font-size:13px; margin-right:6px; }
   </style>
 </head>
 <body>
   <h2>Nghe truyện từ link</h2>
 
   <div>
-    <input id="storyUrl" type="text" placeholder="Dán link truyện vào đây" />
+    <input id="storyUrl" type="text" placeholder="Dán link truyện vào đây (ví dụ: https://niemlam.wordpress.com/...)" />
     <button id="btnFetch">📥 Tải</button>
   </div>
 
@@ -24,53 +25,88 @@
 
   <div class="controls">
     <button id="btnPlay">▶ Đọc</button>
+    <button id="btnPause">⏸ Tạm dừng</button>
+    <button id="btnResume">⏯ Tiếp tục</button>
     <button id="btnStop">⏹ Dừng</button>
+
     <label for="speed">Tốc độ:</label>
-    <input id="speed" type="range" min="0.8" max="1.5" step="0.1" value="1" style="width:110px" />
+    <input id="speed" type="range" min="0.6" max="1.6" step="0.1" value="1" style="width:110px" />
     <span id="speedVal">1.0</span>
+
+    <label for="voiceSelect">Giọng:</label>
+    <select id="voiceSelect" style="min-width:200px"></select>
   </div>
 
   <div class="status" id="status">Trạng thái: chờ</div>
 
   <script>
-    // Thay bằng URL Worker của bạn
-    const WORKER_BASE = "https://truyen-reader.testnetboom07.workers.dev/";
+    // ---- Cấu hình: sửa WORKER_BASE nếu cần ----
+    const WORKER_BASE = "https://truyen-reader.testnetboom07.workers.dev/?url=";
+    // ------------------------------------------
 
     const btnFetch = document.getElementById("btnFetch");
     const storyUrl = document.getElementById("storyUrl");
     const storyText = document.getElementById("storyText");
     const btnPlay = document.getElementById("btnPlay");
+    const btnPause = document.getElementById("btnPause");
+    const btnResume = document.getElementById("btnResume");
     const btnStop = document.getElementById("btnStop");
     const statusEl = document.getElementById("status");
     const speedEl = document.getElementById("speed");
     const speedVal = document.getElementById("speedVal");
+    const voiceSelect = document.getElementById("voiceSelect");
 
     let chunks = [];
-    let currentIndex = 0;
-    let audio = null;
+    let currentChunkIndex = 0;
+    let isPlaying = false;
+    let isPaused = false;
+    let selectedVoiceURI = null;
 
+    // Fetch story text from Worker
     btnFetch.addEventListener("click", async () => {
       const url = storyUrl.value.trim();
       if (!url) { alert("Vui lòng nhập link truyện"); return; }
       status("Đang tải nội dung...");
       try {
-        const res = await fetch(`${WORKER_BASE}/?url=${encodeURIComponent(url)}`);
+        const api = WORKER_BASE + encodeURIComponent(url);
+        const res = await fetch(api, {
+          headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }
+        });
+        if (!res.ok) throw new Error("Server trả lỗi " + res.status);
         const data = await res.json();
-        storyText.value = data.text || "";
+        storyText.value = (data && data.text) ? data.text : "";
         status("Tải xong — sẵn sàng để đọc");
-      } catch (e) {
-        status("Lỗi tải: " + e.message);
+      } catch (err) {
+        status("Lỗi tải: " + err.message);
+        alert("Không tải được: " + err.message);
       }
     });
 
+    // Play / Pause / Resume / Stop
     btnPlay.addEventListener("click", () => {
       const text = storyText.value.trim();
       if (!text) { alert("Chưa có nội dung để đọc"); return; }
-      startRead(text);
+      startTTS(text);
+    });
+
+    btnPause.addEventListener("click", () => {
+      if (speechSynthesis.speaking && !speechSynthesis.paused) {
+        speechSynthesis.pause();
+        isPaused = true;
+        status("Đã tạm dừng");
+      }
+    });
+
+    btnResume.addEventListener("click", () => {
+      if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+        isPaused = false;
+        status("Đang tiếp tục");
+      }
     });
 
     btnStop.addEventListener("click", () => {
-      stopRead();
+      stopTTS();
       status("Đã dừng");
     });
 
@@ -78,47 +114,78 @@
       speedVal.innerText = parseFloat(speedEl.value).toFixed(1);
     });
 
-    function startRead(text) {
-      stopRead();
-      chunks = splitText(text, 500); // cắt nhỏ đoạn 500 ký tự để API dễ xử lý
-      currentIndex = 0;
-      status(`Bắt đầu đọc (1/${chunks.length})`);
-      playNext();
+    // ---- TTS logic: chia đoạn rồi đọc nối tiếp ----
+    function startTTS(text) {
+      stopTTS(); // reset trước khi đọc mới
+      chunks = splitText(text, 1500); // kích thước 1500 ký tự / chunk
+      currentChunkIndex = 0;
+      isPlaying = true;
+      isPaused = false;
+      status(`Bắt đầu đọc (đoạn 1/${chunks.length})`);
+      speakNextChunk();
     }
 
-    async function playNext() {
-      if (currentIndex >= chunks.length) {
+    function speakNextChunk() {
+      if (!isPlaying) return;
+      if (currentChunkIndex >= chunks.length) {
+        isPlaying = false;
         status("Đọc xong");
         return;
       }
-      const chunk = chunks[currentIndex];
-      status(`Đang đọc (đoạn ${currentIndex+1}/${chunks.length})`);
-      const api = `${WORKER_BASE}/?tts=${encodeURIComponent(chunk)}`;
-      audio = new Audio(api);
-      audio.playbackRate = parseFloat(speedEl.value) || 1.0;
-      audio.onended = () => {
-        currentIndex++;
-        setTimeout(playNext, 200);
+
+      const chunk = chunks[currentChunkIndex];
+      const utter = new SpeechSynthesisUtterance(chunk);
+      utter.lang = "vi-VN";
+      utter.rate = parseFloat(speedEl.value) || 1.0;
+      // gán giọng nếu có
+      if (selectedVoiceURI) {
+        const voice = speechSynthesis.getVoices().find(v => v.voiceURI === selectedVoiceURI);
+        if (voice) utter.voice = voice;
+      }
+
+      utter.onend = () => {
+        if (!isPlaying) return; // đã bị dừng
+        if (!isPaused) {
+          currentChunkIndex++;
+          status(`Đang đọc (đoạn ${currentChunkIndex+1}/${chunks.length})`);
+          // nhỏ delay để tránh vấn đề một số browser
+          setTimeout(speakNextChunk, 150);
+        }
       };
-      audio.onerror = () => {
-        currentIndex++;
-        setTimeout(playNext, 200);
+
+      utter.onerror = (e) => {
+        console.error("TTS error:", e);
+        currentChunkIndex++;
+        setTimeout(speakNextChunk, 200);
       };
-      audio.play();
+
+      speechSynthesis.speak(utter);
+      status(`Đang đọc (đoạn ${currentChunkIndex+1}/${chunks.length})`);
     }
 
-    function stopRead() {
-      if (audio) { audio.pause(); audio = null; }
+    function stopTTS() {
+      speechSynthesis.cancel();
+      isPlaying = false;
+      isPaused = false;
       chunks = [];
-      currentIndex = 0;
+      currentChunkIndex = 0;
     }
 
-    function splitText(text, maxLen = 500) {
+    // ---- splitText: giữ câu nếu có thể, cắt ở dấu chấm hoặc space ----
+    function splitText(text, maxLen = 1500) {
       text = text.replace(/\s+/g, ' ').trim();
       const parts = [];
       while (text.length > maxLen) {
-        let idx = text.lastIndexOf(" ", maxLen);
-        if (idx === -1) idx = maxLen;
+        let idx = -1;
+        const substr = text.slice(0, maxLen);
+        // tìm vị trí dấu câu gần cuối cùng
+        const punctRe = /[\.!\?…;。！？，]/g;
+        let match;
+        while ((match = punctRe.exec(substr)) !== null) { idx = match.index + 1; }
+        if (idx === -1) {
+          idx = substr.lastIndexOf(' ');
+          if (idx === -1) idx = maxLen;
+        }
         parts.push(text.slice(0, idx).trim());
         text = text.slice(idx).trim();
       }
@@ -126,9 +193,42 @@
       return parts;
     }
 
-    function status(msg) {
-      statusEl.innerText = "Trạng thái: " + msg;
+    // ---- status helper ----
+    function status(msg) { statusEl.innerText = "Trạng thái: " + msg; }
+
+    // ---- voice list populate ----
+    function populateVoices() {
+      const voices = speechSynthesis.getVoices();
+      voiceSelect.innerHTML = "";
+      // ưu tiên giọng việt nếu có
+      const sorted = voices.slice().sort((a,b) => {
+        const aVi = a.lang && a.lang.toLowerCase().startsWith("vi") ? -1 : 1;
+        const bVi = b.lang && b.lang.toLowerCase().startsWith("vi") ? -1 : 1;
+        return aVi - bVi;
+      });
+      sorted.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v.voiceURI;
+        opt.text = `${v.name} (${v.lang})`;
+        voiceSelect.appendChild(opt);
+      });
+      // chọn mặc định là giọng vi nếu có
+      const firstVi = sorted.find(v => v.lang && v.lang.toLowerCase().startsWith("vi"));
+      if (firstVi) selectedVoiceURI = firstVi.voiceURI;
+      else if (sorted[0]) selectedVoiceURI = sorted[0].voiceURI;
+      if (selectedVoiceURI) voiceSelect.value = selectedVoiceURI;
     }
+
+    voiceSelect.addEventListener("change", () => {
+      selectedVoiceURI = voiceSelect.value;
+    });
+
+    // một số browser tải voices bất đồng bộ
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+
+    // Nếu mở trang mà đã có nội dung, hiển thị trạng thái
+    if (storyText.value.trim()) status("Sẵn sàng");
   </script>
 </body>
 </html>
