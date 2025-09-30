@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Nghe Truyện</title>
+</head>
+<body>
+  <h2>Nghe truyện từ link</h2>
+  <input id="storyLink" type="text" size="60" placeholder="Dán link chương truyện vào đây">
+  <button onclick="loadStory()">📖 Tải nội dung</button>
+  <br><br>
+  <textarea id="storyText" rows="15" cols="60"></textarea><br><br>
+  <button onclick="speak()">▶ Đọc</button>
+  <button onclick="pause()">⏸ Tạm dừng</button>
+  <button onclick="resume()">⏯ Tiếp tục</button>
+  <button onclick="stop()">⏹ Dừng</button>
+
+  <script>
+    async function loadStory() {
+      const link = document.getElementById('storyLink').value;
+      const api = "https://truyen-reader.username.workers.dev/?url=" + encodeURIComponent(link);
+      try {
+        const res = await fetch(api);
+        const data = await res.json();
+        document.getElementById('storyText').value = data.text;
+      } catch (err) {
+        alert("Không tải được: " + err);
+      }
+    }
+
+    let utterance;
+    function speak() {
+      const text = document.getElementById('storyText').value;
+      utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'vi-VN'; // giọng tiếng Việt
+      utterance.rate = 1;       // tốc độ đọc
+      speechSynthesis.speak(utterance);
+    }
+    function pause() { speechSynthesis.pause(); }
+    function resume() { speechSynthesis.resume(); }
+    function stop() { speechSynthesis.cancel(); }
+  </script>
+</body>
+</html>
