@@ -18,7 +18,7 @@
   <script>
     async function loadStory() {
       const link = document.getElementById('storyLink').value;
-      const api = "https://truyen-reader.username.workers.dev/?url=" + encodeURIComponent(link);
+      const api = "https://truyen-reader.testnetboom07.workers.dev/?url=" + encodeURIComponent(link);
       try {
         const res = await fetch(api);
         const data = await res.json();
